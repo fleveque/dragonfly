@@ -1,7 +1,7 @@
 require 'forwardable'
 require 'digest/sha1'
 require 'base64'
-require 'open-uri'
+require 'net/http'
 require 'pathname'
 
 module Dragonfly
@@ -16,6 +16,7 @@ module Dragonfly
     class InvalidArray < StandardError; end
     class NoSHAGiven < StandardError; end
     class IncorrectSHA < StandardError; end
+    class TooManyRedirects < RuntimeError; end
 
     extend Forwardable
     def_delegators :result,
@@ -140,9 +141,20 @@ module Dragonfly
         @filename ||= File.basename(path) if path[/[^\/]$/]
       end
       def apply
-        open(url) do |f|
-          job.update(f.read, :name => filename)
+        data = get(url)
+        job.update(data, :name => filename)
+      end
+      def get(url, redirect_limit=10)
+        raise TooManyRedirects, "url #{url} redirected too many times" if redirect_limit == 0
+        response = Net::HTTP.get_response(URI.parse(url))
+        case response
+        when Net::HTTPSuccess then response.body
+        when Net::HTTPRedirection then get(response['location'], redirect_limit-1)
+        else
+           response.error!
         end
+      rescue Net::HTTPExceptions => e
+        raise ErrorResponse.new(e.response.code.to_i, e.response.body)
       end
     end
 
